@@ -1,21 +1,18 @@
 package config
 
 import (
-	"bytes"
-	"fmt"
-	"github.com/stretchr/testify/require"
-	"os"
-	"runtime"
+	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/creativeprojects/resticprofile/constants"
-	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNoProfile(t *testing.T) {
 	testConfig := ""
-	profile, err := getProfile(testConfig, "profile")
+	profile, err := getProfile("toml", testConfig, "profile")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +22,7 @@ func TestNoProfile(t *testing.T) {
 func TestEmptyProfile(t *testing.T) {
 	testConfig := `[profile]
 `
-	profile, err := getProfile(testConfig, "profile")
+	profile, err := getProfile("toml", testConfig, "profile")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +33,7 @@ func TestEmptyProfile(t *testing.T) {
 func TestNoInitializeValue(t *testing.T) {
 	testConfig := `[profile]
 `
-	profile, err := getProfile(testConfig, "profile")
+	profile, err := getProfile("toml", testConfig, "profile")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +45,7 @@ func TestInitializeValueFalse(t *testing.T) {
 	testConfig := `[profile]
 initialize = false
 `
-	profile, err := getProfile(testConfig, "profile")
+	profile, err := getProfile("toml", testConfig, "profile")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +57,7 @@ func TestInitializeValueTrue(t *testing.T) {
 	testConfig := `[profile]
 initialize = true
 `
-	profile, err := getProfile(testConfig, "profile")
+	profile, err := getProfile("toml", testConfig, "profile")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +72,7 @@ initialize = true
 [profile]
 inherit = "parent"
 `
-	profile, err := getProfile(testConfig, "profile")
+	profile, err := getProfile("toml", testConfig, "profile")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +88,7 @@ initialize = true
 initialize = false
 inherit = "parent"
 `
-	profile, err := getProfile(testConfig, "profile")
+	profile, err := getProfile("toml", testConfig, "profile")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +100,7 @@ func TestUnknownParent(t *testing.T) {
 	testConfig := `[profile]
 inherit = "parent"
 `
-	_, err := getProfile(testConfig, "profile")
+	_, err := getProfile("toml", testConfig, "profile")
 	assert.Error(t, err)
 }
 
@@ -128,7 +125,7 @@ third-value = 3
 verbose = true
 quiet = false
 `
-	profile, err := getProfile(testConfig, "profile")
+	profile, err := getProfile("toml", testConfig, "profile")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +149,7 @@ quiet = true
 verbose = false
 repository = "test"
 `
-	profile, err := getProfile(testConfig, "profile")
+	profile, err := getProfile("toml", testConfig, "profile")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +178,7 @@ array0 = []
 array1 = [1]
 array2 = ["one", "two"]
 `
-	profile, err := getProfile(testConfig, "profile")
+	profile, err := getProfile("toml", testConfig, "profile")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,60 +199,10 @@ array2 = ["one", "two"]
 
 	assert.Equal([]string{}, flags["bool-true"])
 	assert.Equal([]string{"test"}, flags["string"])
-	assert.Equal([]string{fmt.Sprintf("%f", 4.2)}, flags["float"])
+	assert.Equal([]string{strconv.FormatFloat(4.2, 'f', -1, 64)}, flags["float"])
 	assert.Equal([]string{"42"}, flags["int"])
 	assert.Equal([]string{"1"}, flags["array1"])
 	assert.Equal([]string{"one", "two"}, flags["array2"])
-}
-
-func TestFixUnixPaths(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.SkipNow()
-	}
-
-	paths := []struct {
-		source   string
-		expected string
-	}{
-		{"", ""},
-		{"dir", "prefix/dir"},
-		{"/dir", "/dir"},
-		{"~/dir", "~/dir"},
-		{"$TEMP_TEST_DIR/dir", "/home/dir"},
-	}
-
-	err := os.Setenv("TEMP_TEST_DIR", "/home")
-	require.NoError(t, err)
-
-	for _, testPath := range paths {
-		fixed := fixPath(testPath.source, "prefix")
-		assert.Equal(t, testPath.expected, fixed)
-	}
-}
-
-func TestFixWindowsPaths(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.SkipNow()
-	}
-
-	paths := []struct {
-		source   string
-		expected string
-	}{
-		{``, ``},
-		{`dir`, `prefix\dir`},
-		{`\dir`, `prefix\dir`},
-		{`c:\dir`, `c:\dir`},
-		{`%TEMP_TEST_DIR%\dir`, `%TEMP_TEST_DIR%\dir`},
-	}
-
-	err := os.Setenv("TEMP_TEST_DIR", "/home")
-	require.NoError(t, err)
-
-	for _, testPath := range paths {
-		fixed := fixPath(testPath.source, "prefix")
-		assert.Equal(t, testPath.expected, fixed)
-	}
 }
 
 func TestHostInProfile(t *testing.T) {
@@ -268,7 +215,7 @@ host = true
 [profile.snapshots]
 host = "ConfigHost"
 `
-	profile, err := getProfile(testConfig, "profile")
+	profile, err := getProfile("toml", testConfig, "profile")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,17 +236,20 @@ host = "ConfigHost"
 
 func TestKeepPathInRetention(t *testing.T) {
 	assert := assert.New(t)
+	root, err := filepath.Abs("/")
+	require.NoError(t, err)
+	root = filepath.ToSlash(root)
 	testConfig := `
 [profile]
 initialize = true
 
 [profile.backup]
-source = "/"
+source = "` + root + `"
 
 [profile.retention]
 host = false
 `
-	profile, err := getProfile(testConfig, "profile")
+	profile, err := getProfile("toml", testConfig, "profile")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +258,7 @@ host = false
 	flags := profile.GetRetentionFlags()
 	assert.NotNil(flags)
 	assert.Contains(flags, "path")
-	assert.Equal([]string{"/"}, flags["path"])
+	assert.Equal([]string{root}, flags["path"])
 }
 
 func TestReplacePathInRetention(t *testing.T) {
@@ -323,7 +273,7 @@ source = "/some_other_path"
 [profile.retention]
 path = "/"
 `
-	profile, err := getProfile(testConfig, "profile")
+	profile, err := getProfile("toml", testConfig, "profile")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,16 +285,54 @@ path = "/"
 	assert.Equal([]string{"/"}, flags["path"])
 }
 
-func getProfile(configString, profileKey string) (*Profile, error) {
-	viper.SetConfigType("toml")
-	err := viper.ReadConfig(bytes.NewBufferString(configString))
-	if err != nil {
-		return nil, err
+func TestForgetCommandFlags(t *testing.T) {
+	testData := []testTemplate{
+		{"toml", `
+[profile]
+initialize = true
+
+[profile.backup]
+source = "/"
+
+[profile.forget]
+keep-daily = 1
+`},
+		{"json", `
+{
+  "profile": {
+    "backup": {"source": "/"},
+    "forget": {"keep-daily": 1}
+  }
+}`},
+		{"yaml", `---
+profile:
+  backup:
+    source: "/"
+  forget:
+    keep-daily: 1
+`},
+		{"hcl", `
+"profile" = {
+	backup = {
+		source = "/"
+	}
+	forget = {
+		keep-daily = 1
+	}
+}
+`},
 	}
 
-	profile, err := LoadProfile(profileKey)
-	if err != nil {
-		return nil, err
+	for _, testItem := range testData {
+		format := testItem.format
+		testConfig := testItem.config
+		t.Run(format, func(t *testing.T) {
+			profile, err := getProfile(format, testConfig, "profile")
+			require.NoError(t, err)
+
+			assert.NotNil(t, profile)
+			assert.NotNil(t, profile.Forget)
+			assert.NotEmpty(t, profile.Forget["keep-daily"])
+		})
 	}
-	return profile, nil
 }

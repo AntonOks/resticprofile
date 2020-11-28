@@ -12,6 +12,17 @@ import (
 )
 
 var (
+	XDGAppName = "resticprofile"
+
+	// configurationExtensions list the possible extensions for the config file
+	configurationExtensions = []string{
+		"conf",
+		"yaml",
+		"toml",
+		"json",
+		"hcl",
+	}
+
 	defaultConfigurationLocationsUnix = []string{
 		"/usr/local/etc/",
 		"/usr/local/etc/restic/",
@@ -50,17 +61,51 @@ var (
 )
 
 // FindConfigurationFile returns the path of the configuration file
+// If the file doesn't have an extension, it will search for all possible extensions
 func FindConfigurationFile(configFile string) (string, error) {
+	found := ""
+	extension := filepath.Ext(configFile)
+	displayFile := ""
+	if extension != "" {
+		displayFile = fmt.Sprintf("'%s'", configFile)
+		// Search only once through the paths
+		found = findConfigurationFileWithExtension(configFile)
+	} else {
+		displayFile = fmt.Sprintf("'%s' with extensions %s", configFile, strings.Join(configurationExtensions, ", "))
+		// Search all extensions one by one
+		for _, ext := range configurationExtensions {
+			found = findConfigurationFileWithExtension(configFile + "." + ext)
+			if found != "" {
+				break
+			}
+		}
+	}
+	if found != "" {
+		return found, nil
+	}
+	// compile a list of search locations
+	locations := []string{filepath.Join(xdg.ConfigHome, XDGAppName)}
+	for _, configDir := range xdg.ConfigDirs {
+		locations = append(locations, filepath.Join(configDir, XDGAppName))
+	}
+	locations = append(locations, getDefaultConfigurationLocations()...)
+	if home, err := os.UserHomeDir(); err == nil {
+		locations = append(locations, home)
+	}
+	return "", fmt.Errorf("configuration file %s was not found in the current directory nor any of these locations: %s", displayFile, strings.Join(locations, ", "))
+}
+
+func findConfigurationFileWithExtension(configFile string) string {
 	// 1. Simple case: current folder (or rooted path)
 	if fileExists(configFile) {
-		return configFile, nil
+		return configFile
 	}
 
 	// 2. Next we try xdg as the "standard" for user configuration locations
-	xdgFilename, err := xdg.SearchConfigFile(filepath.Join("resticprofile", configFile))
+	xdgFilename, err := xdg.SearchConfigFile(filepath.Join(XDGAppName, configFile))
 	if err == nil {
 		if fileExists(xdgFilename) {
-			return xdgFilename, nil
+			return xdgFilename
 		}
 	}
 
@@ -72,12 +117,11 @@ func FindConfigurationFile(configFile string) (string, error) {
 	for _, configPath := range paths {
 		filename := filepath.Join(configPath, configFile)
 		if fileExists(filename) {
-			return filename, nil
+			return filename
 		}
 	}
-	locations := append([]string{xdg.ConfigHome}, xdg.ConfigDirs...)
-	locations = append(locations, paths...)
-	return "", fmt.Errorf("configuration file '%s' was not found in the current directory nor any of these locations: %s", configFile, strings.Join(locations, ", "))
+	// Not found
+	return ""
 }
 
 // FindResticBinary returns the path of restic executable

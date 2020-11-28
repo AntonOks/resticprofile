@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/creativeprojects/resticprofile/clog"
+	"github.com/creativeprojects/clog"
 	"golang.org/x/sys/windows"
 )
 
@@ -53,7 +53,7 @@ func SetClass(class int) error {
 
 func setPriorityClass(class uint32) error {
 	handle := windows.CurrentProcess()
-	clog.Debugf("Setting priority class %s", GetPriorityClassName(class))
+	clog.Debugf("setting priority class %s", GetPriorityClassName(class))
 	err := windows.SetPriorityClass(handle, class)
 	if err != nil {
 		return fmt.Errorf("error setting priority class: %v", err)

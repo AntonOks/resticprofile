@@ -4,138 +4,115 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestNoProfileKeys(t *testing.T) {
-	testConfig := `
-`
-	viper.Reset()
-	viper.SetConfigType("toml")
-	err := viper.ReadConfig(bytes.NewBufferString(testConfig))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	profiles := ProfileKeys()
-	assert.Nil(t, profiles)
+type testTemplate struct {
+	format string
+	config string
 }
 
-func TestProfileKeys(t *testing.T) {
-	testConfig := `
-[profile1]
-[profile2]
-[profile3]
-[profile3.backup]
-[profile3.retention]
-[profile4]
-value = 1
-[profile4.backup]
-source = "/"
-[profile5]
-other = 2
-[profile5.snapshots]
+func TestGetGlobal(t *testing.T) {
+	testData := []testTemplate{
+		{"toml", `
 [global]
-Initialize = true
-`
-	viper.Reset()
-	viper.SetConfigType("toml")
-	err := viper.ReadConfig(bytes.NewBufferString(testConfig))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	profiles := ProfileKeys()
-	assert.Len(t, profiles, 2)
-	assert.Contains(t, profiles, "profile4")
-	assert.Contains(t, profiles, "profile5")
+priority = "low"
+default-command = "version"
+# initialize a repository if none exist at location
+initialize = false
+`},
+		{"json", `
+{
+  "global": {
+    "default-command": "version",
+    "initialize": false,
+    "priority": "low"
+  }
+}`},
+		{"yaml", `---
+global:
+    default-command: version
+    initialize: false
+    priority: low
+`},
+		{"hcl", `
+"global" = {
+    default-command = "version"
+    initialize = false
+    priority = "low"
+}
+`},
+		{"hcl", `
+"global" = {
+    default-command = "version"
+    initialize = true
 }
 
-func TestNoProfileGroups(t *testing.T) {
-	testConfig := `
-`
-	viper.Reset()
-	viper.SetConfigType("toml")
-	err := viper.ReadConfig(bytes.NewBufferString(testConfig))
-	if err != nil {
-		t.Fatal(err)
+"global" = {
+    initialize = false
+    priority = "low"
+}
+`},
 	}
 
-	groups := ProfileGroups()
-	assert.Nil(t, groups)
+	for _, testItem := range testData {
+		format := testItem.format
+		testConfig := testItem.config
+		t.Run(format, func(t *testing.T) {
+			c, err := Load(bytes.NewBufferString(testConfig), format)
+			require.NoError(t, err)
+
+			global, err := c.GetGlobalSection()
+			require.NoError(t, err)
+			assert.Equal(t, "version", global.DefaultCommand)
+			assert.Equal(t, false, global.Initialize)
+			assert.Equal(t, "low", global.Priority)
+			assert.Equal(t, false, global.IONice)
+		})
+	}
 }
 
-func TestEmptyProfileGroups(t *testing.T) {
-	testConfig := `[groups]
-`
-	viper.Reset()
-	viper.SetConfigType("toml")
-	err := viper.ReadConfig(bytes.NewBufferString(testConfig))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	groups := ProfileGroups()
-	assert.NotNil(t, groups)
+func TestStringWithCommaNotConvertedToSlice(t *testing.T) {
+	testData := []testTemplate{
+		{"toml", `
+[profile]
+run-before = "first, second, third"
+run-after = ["first", "second", "third"]
+`},
+		{"json", `
+{
+  "profile": {
+    "run-before": "first, second, third",
+    "run-after": ["first", "second", "third"]
+  }
+}`},
+		{"yaml", `---
+profile:
+    run-before: first, second, third
+    run-after: ["first", "second", "third"]
+`},
+		{"hcl", `
+"profile" = {
+    run-before = "first, second, third"
+    run-after = ["first", "second", "third"]
 }
-
-func TestProfileGroups(t *testing.T) {
-	testConfig := `[groups]
-first = ["backup"]
-second = ["root", "dev"]
-`
-	viper.Reset()
-	viper.SetConfigType("toml")
-	err := viper.ReadConfig(bytes.NewBufferString(testConfig))
-	if err != nil {
-		t.Fatal(err)
+`},
 	}
 
-	groups := ProfileGroups()
-	assert.NotNil(t, groups)
-	assert.Len(t, groups, 2)
-}
+	for _, testItem := range testData {
+		format := testItem.format
+		testConfig := testItem.config
+		t.Run(format, func(t *testing.T) {
+			c, err := Load(bytes.NewBufferString(testConfig), format)
+			require.NoError(t, err)
 
-func TestNoProfileSections(t *testing.T) {
-	testConfig := `
-`
-	viper.Reset()
-	viper.SetConfigType("toml")
-	err := viper.ReadConfig(bytes.NewBufferString(testConfig))
-	if err != nil {
-		t.Fatal(err)
+			profile, err := c.GetProfile("profile")
+			require.NoError(t, err)
+
+			assert.NotNil(t, profile)
+			assert.Len(t, profile.RunBefore, 1)
+			assert.Len(t, profile.RunAfter, 3)
+		})
 	}
-
-	profileSections := ProfileSections()
-	assert.Nil(t, profileSections)
-}
-
-func TestProfileSections(t *testing.T) {
-	testConfig := `
-[profile1]
-[profile2]
-[profile3]
-[profile3.backup]
-[profile3.retention]
-[profile4]
-value = 1
-[profile4.backup]
-source = "/"
-[profile5]
-other = 2
-[profile5.snapshots]
-[global]
-Initialize = true
-`
-	viper.Reset()
-	viper.SetConfigType("toml")
-	err := viper.ReadConfig(bytes.NewBufferString(testConfig))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	profileSections := ProfileSections()
-	assert.NotNil(t, profileSections)
-	assert.Len(t, profileSections, 2)
 }

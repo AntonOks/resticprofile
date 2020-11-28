@@ -1,0 +1,115 @@
+global:
+    default-command: version
+    initialize: false
+    priority: low
+
+default:
+    password-file: key
+    repository: /tmp/backup
+    lock: "/tmp/backup/resticprofile-{{ .Profile.Name }}.lock"
+
+documents:
+    inherit: default
+    initialize: true
+    run-before: "echo == run-before profile $PROFILE_NAME command $PROFILE_COMMAND"
+    run-after: "echo == run-after profile $PROFILE_NAME command $PROFILE_COMMAND"
+    run-after-fail: "echo == Error in profile $PROFILE_NAME command $PROFILE_COMMAND: $ERROR"
+    backup:
+        run-before: "echo === run-before backup profile $PROFILE_NAME command $PROFILE_COMMAND"
+        run-after: "echo === run-after backup profile $PROFILE_NAME command $PROFILE_COMMAND"
+        tag: documents
+        source: ~/Documents
+        schedule: "*:00,15,30,45" # every 15 minutes
+        schedule-permission: user
+        check-before: true
+    retention:
+        before-backup: true
+    snapshots:
+        tag: documents
+
+test1:
+    inherit: default
+    initialize: true
+    verbose: true
+    backup:
+        source: ./
+        schedule: "*:00,15,30,45"
+        # schedule: "*:*"
+        schedule-permission: user
+        schedule-log: backup-test1.log
+    check:
+        schedule: "*-*-1"
+        schedule-permission: user
+        schedule-log: check-test1.log
+
+test2:
+    inherit: default
+    verbose: true
+    backup:
+        source: ./
+        schedule: "*:05,20,35,50"
+        schedule-permission: system
+        schedule-log: backup-test2.log
+        run-after: "chown -R $SUDO_USER $HOME/.cache/restic /tmp/backup"
+    check:
+        schedule: "*-*-2"
+        schedule-permission: system
+        schedule-log: check-test2.log
+
+longrun:
+    inherit: default
+    initialize: true
+    verbose: true
+    backup:
+        source: ./
+        schedule: "*:*"
+        schedule-permission: user
+        schedule-log: backup-longrun.log
+        # should keep it going for more than a minute
+        run-before: "ping -c 100 127.0.0.1"
+
+self:
+    inherit: default
+    backup:
+        source: ./
+    snapshots:
+        tag: self
+
+src:
+    inherit: default
+    initialize: true
+    lock: "/tmp/resticprofile-profile-src.lock"
+    backup:
+        check-before: true
+        exclude:
+        - /**/.git
+        exclude-caches: true
+        one-file-system: false
+        run-after: echo All Done!
+        run-before:
+        - echo Starting!
+        - ls -al ~/go
+        source:
+        - ~/go
+        tag:
+        - test
+        - dev
+    retention:
+        after-backup: true
+        before-backup: false
+        compact: false
+        keep-within: 30d
+        prune: true
+    snapshots:
+        tag:
+        - test
+        - dev
+        
+stdin:
+    inherit: default
+    backup:
+        stdin: true
+        stdin-filename: stdin-test
+        tag: stdin
+    snapshots:
+        tag: stdin

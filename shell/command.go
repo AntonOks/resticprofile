@@ -9,6 +9,9 @@ import (
 	"strings"
 )
 
+// SetPID is a callback to send the PID of the current child process
+type SetPID func(pid int)
+
 // Command holds the configuration to run a shell command
 type Command struct {
 	Command   string
@@ -18,12 +21,13 @@ type Command struct {
 	Stdin     io.Reader
 	Stdout    io.Writer
 	Stderr    io.Writer
+	SetPID    SetPID
 	sigChan   chan os.Signal
-	done      chan bool
+	done      chan interface{}
 }
 
-// newShellCommand instantiate a default Command without receiving OS signals (SIGTERM, etc.)
-func newShellCommand(command string, args []string) *Command {
+// NewCommand instantiate a default Command without receiving OS signals (SIGTERM, etc.)
+func NewCommand(command string, args []string) *Command {
 	return &Command{
 		Command:   command,
 		Arguments: args,
@@ -38,7 +42,7 @@ func NewSignalledCommand(command string, args []string, c chan os.Signal) *Comma
 		Arguments: args,
 		Environ:   []string{},
 		sigChan:   c,
-		done:      make(chan bool, 1),
+		done:      make(chan interface{}),
 	}
 }
 
@@ -62,23 +66,21 @@ func (c *Command) Run() error {
 		cmd.Env = append(cmd.Env, c.Environ...)
 	}
 
-	if c.sigChan == nil {
-		// Simple case without taking care of OS signals
-		err = cmd.Run()
-		if err != nil {
-			return err
-		}
-		return nil
-	}
-
-	// More complex case with OS signalling
+	// spawn the child process
 	if err = cmd.Start(); err != nil {
 		return err
 	}
-	defer func() {
-		close(c.done)
-	}()
-	go c.propagateSignal(cmd.Process)
+	if c.SetPID != nil {
+		// send the PID back (to write down in a lockfile)
+		c.SetPID(cmd.Process.Pid)
+	}
+	// setup the OS signalling if we need it (typically used for unixes but not windows)
+	if c.sigChan != nil {
+		defer func() {
+			close(c.done)
+		}()
+		go c.propagateSignal(cmd.Process)
+	}
 	return cmd.Wait()
 }
 
@@ -90,7 +92,7 @@ func getShellCommand(command string, args []string) (string, []string, error) {
 		if err != nil {
 			return "", nil, fmt.Errorf("cannot find shell executable (cmd.exe) in path")
 		}
-		// cmd.exe accepts that all arguments are sent one bye one
+		// cmd.exe accepts that all arguments are sent one by one
 		args := append([]string{"/C", command}, removeQuotes(args)...)
 		return shell, args, nil
 	}

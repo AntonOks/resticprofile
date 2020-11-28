@@ -1,155 +1,114 @@
 package config
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
-
-	"github.com/creativeprojects/resticprofile/clog"
+	"github.com/creativeprojects/clog"
 	"github.com/creativeprojects/resticprofile/constants"
-	"github.com/spf13/viper"
 )
 
 // Profile contains the whole profile configuration
 type Profile struct {
+	config        *Config
 	Name          string
-	Quiet         bool                   `mapstructure:"quiet" argument:"quiet"`
-	Verbose       bool                   `mapstructure:"verbose" argument:"verbose"`
-	Repository    string                 `mapstructure:"repository" argument:"repo"`
-	PasswordFile  string                 `mapstructure:"password-file" argument:"password-file"`
-	CacheDir      string                 `mapstructure:"cache-dir" argument:"cache-dir"`
-	CACert        string                 `mapstructure:"cacert" argument:"cacert"`
-	TLSClientCert string                 `mapstructure:"tls-client-cert" argument:"tls-client-cert"`
-	Initialize    bool                   `mapstructure:"initialize"`
-	Inherit       string                 `mapstructure:"inherit"`
-	Lock          string                 `mapstructure:"lock"`
-	RunBefore     []string               `mapstructure:"run-before"`
-	RunAfter      []string               `mapstructure:"run-after"`
-	RunAfterFail  []string               `mapstructure:"run-after-fail"`
-	Environment   map[string]string      `mapstructure:"env"`
-	Backup        *BackupSection         `mapstructure:"backup"`
-	Retention     *RetentionSection      `mapstructure:"retention"`
-	Snapshots     map[string]interface{} `mapstructure:"snapshots"`
-	Forget        map[string]interface{} `mapstructure:"forget"`
-	Check         map[string]interface{} `mapstructure:"check"`
-	Mount         map[string]interface{} `mapstructure:"mount"`
-	OtherFlags    map[string]interface{} `mapstructure:",remain"`
+	Quiet         bool                      `mapstructure:"quiet" argument:"quiet"`
+	Verbose       bool                      `mapstructure:"verbose" argument:"verbose"`
+	Repository    string                    `mapstructure:"repository" argument:"repo"`
+	PasswordFile  string                    `mapstructure:"password-file" argument:"password-file"`
+	CacheDir      string                    `mapstructure:"cache-dir" argument:"cache-dir"`
+	CACert        string                    `mapstructure:"cacert" argument:"cacert"`
+	TLSClientCert string                    `mapstructure:"tls-client-cert" argument:"tls-client-cert"`
+	Initialize    bool                      `mapstructure:"initialize"`
+	Inherit       string                    `mapstructure:"inherit"`
+	Lock          string                    `mapstructure:"lock"`
+	ForceLock     bool                      `mapstructure:"force-inactive-lock"`
+	RunBefore     []string                  `mapstructure:"run-before"`
+	RunAfter      []string                  `mapstructure:"run-after"`
+	RunAfterFail  []string                  `mapstructure:"run-after-fail"`
+	StatusFile    string                    `mapstructure:"status-file"`
+	Environment   map[string]string         `mapstructure:"env"`
+	Backup        *BackupSection            `mapstructure:"backup"`
+	Retention     *RetentionSection         `mapstructure:"retention"`
+	Check         *OtherSectionWithSchedule `mapstructure:"check"`
+	Snapshots     map[string]interface{}    `mapstructure:"snapshots"`
+	Forget        map[string]interface{}    `mapstructure:"forget"`
+	Mount         map[string]interface{}    `mapstructure:"mount"`
+	OtherFlags    map[string]interface{}    `mapstructure:",remain"`
 }
 
 // BackupSection contains the specific configuration to the 'backup' command
 type BackupSection struct {
-	CheckBefore bool                   `mapstructure:"check-before"`
-	CheckAfter  bool                   `mapstructure:"check-after"`
-	RunBefore   []string               `mapstructure:"run-before"`
-	RunAfter    []string               `mapstructure:"run-after"`
-	UseStdin    bool                   `mapstructure:"stdin" argument:"stdin"`
-	Source      []string               `mapstructure:"source"`
-	ExcludeFile []string               `mapstructure:"exclude-file" argument:"exclude-file"`
-	FilesFrom   []string               `mapstructure:"files-from" argument:"files-from"`
-	OtherFlags  map[string]interface{} `mapstructure:",remain"`
+	CheckBefore        bool                   `mapstructure:"check-before"`
+	CheckAfter         bool                   `mapstructure:"check-after"`
+	RunBefore          []string               `mapstructure:"run-before"`
+	RunAfter           []string               `mapstructure:"run-after"`
+	UseStdin           bool                   `mapstructure:"stdin" argument:"stdin"`
+	Source             []string               `mapstructure:"source"`
+	Exclude            []string               `mapstructure:"exclude" argument:"exclude"`
+	Iexclude           []string               `mapstructure:"iexclude" argument:"iexclude"`
+	ExcludeFile        []string               `mapstructure:"exclude-file" argument:"exclude-file"`
+	FilesFrom          []string               `mapstructure:"files-from" argument:"files-from"`
+	Schedule           []string               `mapstructure:"schedule"`
+	SchedulePermission string                 `mapstructure:"schedule-permission"`
+	ScheduleLog        string                 `mapstructure:"schedule-log"`
+	OtherFlags         map[string]interface{} `mapstructure:",remain"`
 }
 
-// RetentionSection contains the specific configuration to the 'forget' command run as part of a backup
+// RetentionSection contains the specific configuration to
+// the 'forget' command when running as part of a backup
 type RetentionSection struct {
-	BeforeBackup bool                   `mapstructure:"before-backup"`
-	AfterBackup  bool                   `mapstructure:"after-backup"`
-	OtherFlags   map[string]interface{} `mapstructure:",remain"`
+	BeforeBackup       bool                   `mapstructure:"before-backup"`
+	AfterBackup        bool                   `mapstructure:"after-backup"`
+	Schedule           []string               `mapstructure:"schedule"`
+	SchedulePermission string                 `mapstructure:"schedule-permission"`
+	ScheduleLog        string                 `mapstructure:"schedule-log"`
+	OtherFlags         map[string]interface{} `mapstructure:",remain"`
+}
+
+// OtherSectionWithSchedule is a section containing schedule only specific parameters
+// (the other parameters being for restic)
+type OtherSectionWithSchedule struct {
+	Schedule           []string               `mapstructure:"schedule"`
+	SchedulePermission string                 `mapstructure:"schedule-permission"`
+	ScheduleLog        string                 `mapstructure:"schedule-log"`
+	OtherFlags         map[string]interface{} `mapstructure:",remain"`
 }
 
 // NewProfile instantiates a new blank profile
-func NewProfile(name string) *Profile {
+func NewProfile(c *Config, name string) *Profile {
 	return &Profile{
-		Name: name,
+		Name:   name,
+		config: c,
 	}
-}
-
-// HasProfile returns true if the profile exists in the configuration
-func HasProfile(profileKey string) bool {
-	return viper.IsSet(profileKey)
-}
-
-// HasGroup returns true if the group of profiles exists in the configuration
-func HasGroup(groupKey string) bool {
-	if !viper.IsSet(constants.SectionConfigurationGroups) {
-		return false
-	}
-	return viper.IsSet(constants.SectionConfigurationGroups + "." + groupKey)
-}
-
-// LoadGroup returns the list of profiles in a group
-func LoadGroup(groupKey string) ([]string, error) {
-	group := make([]string, 0)
-	err := viper.UnmarshalKey(constants.SectionConfigurationGroups+"."+groupKey, &group)
-	if err != nil {
-		return nil, err
-	}
-	return group, nil
-}
-
-// LoadProfile from configuration
-func LoadProfile(profileKey string) (*Profile, error) {
-	var err error
-	var profile *Profile
-
-	if !viper.IsSet(profileKey) {
-		return nil, nil
-	}
-
-	// Load parent profile first if it is inherited
-	if viper.IsSet(profileKey + "." + constants.ParameterInherit) {
-		inherit := viper.GetString(profileKey + "." + constants.ParameterInherit)
-		if inherit != "" {
-			profile, err = LoadProfile(inherit)
-			if err != nil {
-				return nil, err
-			}
-			if profile == nil {
-				return nil, fmt.Errorf("error in profile '%s': Parent profile '%s' not found", profileKey, inherit)
-			}
-			profile.Name = profileKey
-		}
-	}
-
-	// If profile is not inherited, create a blank one
-	if profile == nil {
-		profile = NewProfile(profileKey)
-	}
-
-	err = viper.UnmarshalKey(profileKey, profile)
-	if err != nil {
-		return nil, err
-	}
-	return profile, nil
 }
 
 // SetRootPath changes the path of all the relative paths and files in the configuration
 func (p *Profile) SetRootPath(rootPath string) {
 
-	p.Lock = fixPath(p.Lock, rootPath)
-	p.PasswordFile = fixPath(p.PasswordFile, rootPath)
-	p.CacheDir = fixPath(p.CacheDir, rootPath)
-	p.CACert = fixPath(p.CACert, rootPath)
-	p.TLSClientCert = fixPath(p.TLSClientCert, rootPath)
+	p.Lock = fixPath(p.Lock, expandEnv, absolutePrefix(rootPath), escapeSpaces)
+	p.PasswordFile = fixPath(p.PasswordFile, expandEnv, absolutePrefix(rootPath), escapeSpaces)
+	p.CacheDir = fixPath(p.CacheDir, expandEnv, absolutePrefix(rootPath), escapeSpaces)
+	p.CACert = fixPath(p.CACert, expandEnv, absolutePrefix(rootPath), escapeSpaces)
+	p.TLSClientCert = fixPath(p.TLSClientCert, expandEnv, absolutePrefix(rootPath), escapeSpaces)
 
 	if p.Backup != nil {
 		if p.Backup.ExcludeFile != nil && len(p.Backup.ExcludeFile) > 0 {
-			for i := 0; i < len(p.Backup.ExcludeFile); i++ {
-				p.Backup.ExcludeFile[i] = fixPath(p.Backup.ExcludeFile[i], rootPath)
-			}
+			p.Backup.ExcludeFile = fixPaths(p.Backup.ExcludeFile, expandEnv, absolutePrefix(rootPath), escapeSpaces)
 		}
 
 		if p.Backup.FilesFrom != nil && len(p.Backup.FilesFrom) > 0 {
-			for i := 0; i < len(p.Backup.FilesFrom); i++ {
-				p.Backup.FilesFrom[i] = fixPath(p.Backup.FilesFrom[i], rootPath)
-			}
+			p.Backup.FilesFrom = fixPaths(p.Backup.FilesFrom, expandEnv, absolutePrefix(rootPath), escapeSpaces)
 		}
 
-		// Do we need to do source files? (it wasn't the case before v0.6.0)
+		// Backup source is NOT relative to the configuration, but where the script was launched instead
 		if p.Backup.Source != nil && len(p.Backup.Source) > 0 {
-			for i := 0; i < len(p.Backup.Source); i++ {
-				p.Backup.Source[i] = fixPath(p.Backup.Source[i], rootPath)
-			}
+			p.Backup.Source = fixPaths(p.Backup.Source, expandEnv, escapeSpaces)
+		}
+
+		if p.Backup.Exclude != nil && len(p.Backup.Exclude) > 0 {
+			p.Backup.Exclude = fixPaths(p.Backup.Exclude, expandEnv, escapeShellString)
+		}
+
+		if p.Backup.Iexclude != nil && len(p.Backup.Iexclude) > 0 {
+			p.Backup.Iexclude = fixPaths(p.Backup.Iexclude, expandEnv, escapeShellString)
 		}
 	}
 }
@@ -183,7 +142,7 @@ func (p *Profile) GetCommonFlags() map[string][]string {
 	return flags
 }
 
-// GetCommandFlags returns the flags specific to the command (backup, snapshots, etc.)
+// GetCommandFlags returns the flags specific to the command (backup, snapshots, forget, etc.)
 func (p *Profile) GetCommandFlags(command string) map[string][]string {
 	flags := p.GetCommonFlags()
 
@@ -194,7 +153,7 @@ func (p *Profile) GetCommandFlags(command string) map[string][]string {
 			break
 		}
 		commandFlags := convertStructToFlags(*p.Backup)
-		if commandFlags != nil && len(commandFlags) > 0 {
+		if len(commandFlags) > 0 {
 			flags = mergeFlags(flags, commandFlags)
 		}
 		flags = addOtherFlags(flags, p.Backup.OtherFlags)
@@ -205,8 +164,18 @@ func (p *Profile) GetCommandFlags(command string) map[string][]string {
 		}
 
 	case constants.CommandCheck:
-		if p.Check != nil {
-			flags = addOtherFlags(flags, p.Check)
+		if p.Check != nil && p.Check.OtherFlags != nil {
+			flags = addOtherFlags(flags, p.Check.OtherFlags)
+		}
+
+	case constants.CommandForget:
+		if p.Forget != nil {
+			flags = addOtherFlags(flags, p.Forget)
+		}
+
+	case constants.CommandMount:
+		if p.Mount != nil {
+			flags = addOtherFlags(flags, p.Mount)
 		}
 	}
 
@@ -215,10 +184,15 @@ func (p *Profile) GetCommandFlags(command string) map[string][]string {
 
 // GetRetentionFlags returns the flags specific to the "forget" command being run as part of a backup
 func (p *Profile) GetRetentionFlags() map[string][]string {
+	// if there was no "other" flags, the map could be un-initialized
+	if p.Retention.OtherFlags == nil {
+		p.Retention.OtherFlags = make(map[string]interface{})
+	}
+
 	flags := p.GetCommonFlags()
 	// Special case of retention: we do copy the "source" from "backup" as "path" if it hasn't been redefined in "retention"
 	if _, found := p.Retention.OtherFlags[constants.ParameterPath]; !found {
-		p.Retention.OtherFlags[constants.ParameterPath] = p.Backup.Source
+		p.Retention.OtherFlags[constants.ParameterPath] = fixPaths(p.Backup.Source, absolutePath)
 	}
 	flags = addOtherFlags(flags, p.Retention.OtherFlags)
 	return flags
@@ -232,8 +206,53 @@ func (p *Profile) GetBackupSource() []string {
 	return p.Backup.Source
 }
 
+// Schedules returns a slice of ScheduleConfig that satisfy the schedule.Config interface
+func (p *Profile) Schedules() []*ScheduleConfig {
+	// Default to 3: backup, retention and check
+	configs := make([]*ScheduleConfig, 0, 3)
+	// Backup
+	if p.Backup != nil && p.Backup.Schedule != nil && len(p.Backup.Schedule) > 0 {
+		config := &ScheduleConfig{
+			profileName: p.Name,
+			commandName: constants.CommandBackup,
+			schedules:   p.Backup.Schedule,
+			permission:  p.Backup.SchedulePermission,
+			environment: p.Environment,
+			nice:        10, // hard-coded for now
+			logfile:     p.Backup.ScheduleLog,
+		}
+		configs = append(configs, config)
+	}
+	// Retention (forget)
+	if p.Retention != nil && p.Retention.Schedule != nil && len(p.Retention.Schedule) > 0 {
+		config := &ScheduleConfig{
+			profileName: p.Name,
+			commandName: constants.SectionConfigurationRetention,
+			schedules:   p.Retention.Schedule,
+			permission:  p.Retention.SchedulePermission,
+			environment: p.Environment,
+			nice:        10, // hard-coded for now
+			logfile:     p.Retention.ScheduleLog,
+		}
+		configs = append(configs, config)
+	}
+	// Check
+	if p.Check != nil && p.Check.Schedule != nil && len(p.Check.Schedule) > 0 {
+		config := &ScheduleConfig{
+			profileName: p.Name,
+			commandName: constants.CommandCheck,
+			schedules:   p.Check.Schedule,
+			permission:  p.Check.SchedulePermission,
+			environment: p.Environment,
+			nice:        10, // hard-coded for now
+			logfile:     p.Check.ScheduleLog,
+		}
+		configs = append(configs, config)
+	}
+	return configs
+}
 func addOtherFlags(flags map[string][]string, otherFlags map[string]interface{}) map[string][]string {
-	if otherFlags == nil || len(otherFlags) == 0 {
+	if len(otherFlags) == 0 {
 		return flags
 	}
 
@@ -247,30 +266,16 @@ func addOtherFlags(flags map[string][]string, otherFlags map[string]interface{})
 }
 
 func mergeFlags(flags, newFlags map[string][]string) map[string][]string {
-	if (flags == nil || len(flags) == 0) && newFlags != nil {
+	if len(flags) == 0 && newFlags != nil {
 		return newFlags
 	}
-	if flags != nil && (newFlags == nil || len(newFlags) == 0) {
+	if flags != nil && len(newFlags) == 0 {
 		return flags
 	}
 	for key, value := range newFlags {
 		flags[key] = value
 	}
 	return flags
-}
-
-func fixPath(source, prefix string) string {
-	if strings.Contains(source, "$") || strings.Contains(source, "%") {
-		source = os.ExpandEnv(source)
-	}
-	if source == "" ||
-		filepath.IsAbs(source) ||
-		strings.HasPrefix(source, "~") ||
-		strings.HasPrefix(source, "$") ||
-		strings.HasPrefix(source, "%") {
-		return source
-	}
-	return filepath.Join(prefix, source)
 }
 
 func replaceTrueValue(source map[string]interface{}, key, replace string) {

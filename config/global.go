@@ -2,7 +2,6 @@ package config
 
 import (
 	"github.com/creativeprojects/resticprofile/constants"
-	"github.com/spf13/viper"
 )
 
 // Global holds the configuration from the global section
@@ -15,21 +14,16 @@ type Global struct {
 	DefaultCommand string `mapstructure:"default-command"`
 	Initialize     bool   `mapstructure:"initialize"`
 	ResticBinary   string `mapstructure:"restic-binary"`
+	MinMemory      uint64 `mapstructure:"min-memory"`
 }
 
-// GetGlobalSection returns the global configuration
-func GetGlobalSection() (*Global, error) {
-	global := &Global{
+// newGlobal instantiates a new Global with default values
+func newGlobal() *Global {
+	return &Global{
 		IONice:         constants.DefaultIONiceFlag,
 		Nice:           constants.DefaultNiceFlag,
 		DefaultCommand: constants.DefaultCommand,
 		ResticBinary:   constants.DefaultResticBinary,
+		MinMemory:      constants.DefaultMinMemory,
 	}
-	if viper.IsSet(constants.SectionConfigurationGlobal) {
-		err := viper.UnmarshalKey(constants.SectionConfigurationGlobal, global)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return global, nil
 }

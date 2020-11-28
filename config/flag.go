@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"reflect"
+	"strconv"
 )
 
 var (
@@ -23,7 +24,7 @@ func convertStructToFlags(orig interface{}) map[string][]string {
 		valueOf = valueOf.Elem()
 	}
 
-	flags := make(map[string][]string, 0)
+	flags := make(map[string][]string)
 	// NumField() will panic if typeOf is not a struct
 	if typeOf.Kind() != reflect.Struct {
 		panic(fmt.Errorf("unsupported type %s, expected %s", typeOf.Kind(), reflect.Struct))
@@ -64,12 +65,17 @@ func stringifyValue(value reflect.Value) ([]string, bool) {
 
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		intVal := value.Int()
-		stringVal := fmt.Sprintf("%d", intVal)
+		stringVal := strconv.FormatInt(intVal, 10)
+		return []string{stringVal}, intVal != 0
+
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		intVal := value.Uint()
+		stringVal := strconv.FormatUint(intVal, 10)
 		return []string{stringVal}, intVal != 0
 
 	case reflect.Float32, reflect.Float64:
 		floatVal := value.Float()
-		stringVal := fmt.Sprintf("%f", floatVal)
+		stringVal := strconv.FormatFloat(floatVal, 'f', -1, 64)
 		return []string{stringVal}, floatVal != 0
 
 	case reflect.Slice, reflect.Array:
