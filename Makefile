@@ -16,13 +16,14 @@ BINARY_DARWIN=$(BINARY)_darwin
 BINARY_LINUX=$(BINARY)_linux
 BINARY_PI=$(BINARY)_pi
 BINARY_WINDOWS=$(BINARY).exe
+README=README.md
 
 TESTS=./...
 COVERAGE_FILE=coverage.out
 
 BUILD=build/
-RESTIC_VERSION=0.11.0
-GO_VERSION=1.15
+RESTIC_VERSION=0.12.0
+GO_VERSION=1.16
 
 BUILD_DATE=`date`
 BUILD_COMMIT=`git rev-parse HEAD`
@@ -38,7 +39,11 @@ ifeq ($(UNAME),Darwin)
 	TMP_MOUNT=${TMP_MOUNT_DARWIN}
 endif
 
-.PHONY: all test test-ci build install build-mac build-linux build-windows build-all coverage clean test-docker build-docker ramdisk passphrase rest-server nightly toc staticcheck release-snapshot generate-install
+TOC_START=<\!--ts-->
+TOC_END=<\!--te-->
+TOC_PATH=toc.md
+
+.PHONY: all test test-ci build install build-mac build-linux build-windows build-all coverage clean ramdisk passphrase rest-server nightly toc staticcheck release-snapshot generate-install
 
 all: test build
 
@@ -78,17 +83,6 @@ clean:
 		rm -rf $(BINARY) $(BINARY_DARWIN) $(BINARY_LINUX) $(BINARY_PI) $(BINARY_WINDOWS) $(COVERAGE_FILE) restic_*_linux_amd64* ${BUILD}restic* dist/*
 		restic cache --cleanup
 
-test-docker:
-		docker run --rm -v "${GOPATH}":/go -w /go/src/creativeprojects/resticprofile golang:${GO_VERSION} $(GOTEST) -v $(TESTS)
-
-build-docker: clean
-		CGO_ENABLED=0 GOARCH=amd64 GOOS=linux $(GOBUILD) -v -ldflags "-X 'main.commit=${BUILD_COMMIT}' -X 'main.date=${BUILD_DATE}' -X 'main.builtBy=make'" -o ${BUILD}$(BINARY) .
-		curl -LO https://github.com/restic/restic/releases/download/v${RESTIC_VERSION}/restic_${RESTIC_VERSION}_linux_amd64.bz2
-		bunzip2 restic_${RESTIC_VERSION}_linux_amd64.bz2
-		mv restic_${RESTIC_VERSION}_linux_amd64 ${BUILD}restic
-		chmod +x ${BUILD}restic
-		cd ${BUILD}; docker build --pull --tag creativeprojects/resticprofile .
-
 release-snapshot:
 		goreleaser build --snapshot --config .goreleaser.yml --rm-dist
 
@@ -122,9 +116,13 @@ nightly:
 	goreleaser --snapshot --skip-publish --rm-dist
 
 toc:
+	go get github.com/ekalinin/github-markdown-toc.go
 	go install github.com/ekalinin/github-markdown-toc.go
 	go mod tidy
-	cat README.md | github-markdown-toc.go --hide-footer
+	cat ${README} | github-markdown-toc.go --hide-footer > ${TOC_PATH}
+	sed -i ".1" "/${TOC_START}/,/${TOC_END}/{//!d;}" "${README}"
+	sed -i ".2" "/${TOC_START}/r ${TOC_PATH}" "${README}"
+	rm ${README}.1 ${README}.2 ${TOC_PATH}
 
 staticcheck:
 	go get -u honnef.co/go/tools/cmd/staticcheck
@@ -132,4 +130,4 @@ staticcheck:
 	go run honnef.co/go/tools/cmd/staticcheck ./...
 
 generate-install:
-	godownloader .goreleaser.yml -r creativeprojects/resticprofile -o install.sh
+	godownloader .godownloader.yml -r creativeprojects/resticprofile -o install.sh

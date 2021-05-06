@@ -42,6 +42,43 @@ const (
 	codeServiceNotFound = 113
 )
 
+// Schedule using launchd
+type Schedule struct {
+}
+
+// NewScheduler creates a Schedule object (of Scheduler interface)
+// On macOS only launchd scheduler is supported
+func NewScheduler(scheduler, profileName string) Scheduler {
+	return &Schedule{}
+}
+
+// Init verifies launchd is available on this system
+func (s *Schedule) Init() error {
+	found, err := exec.LookPath(launchdBin)
+	if err != nil || found == "" {
+		return errors.New("it doesn't look like launchd is installed on your system")
+	}
+	return nil
+}
+
+// Close does nothing with launchd
+func (s *Schedule) Close() {
+}
+
+// NewJob instantiates a Job object (of SchedulerJob interface) to schedule jobs
+func (s *Schedule) NewJob(config Config) SchedulerJob {
+	return &Job{
+		config: config,
+	}
+}
+
+// DisplayStatus does nothing on launchd
+func (s *Schedule) DisplayStatus() {
+}
+
+// Verify interface
+var _ Scheduler = &Schedule{}
+
 // LaunchJob is an agent definition for launchd
 type LaunchJob struct {
 	Label                 string             `plist:"Label"`
@@ -54,6 +91,14 @@ type LaunchJob struct {
 	WorkingDirectory      string             `plist:"WorkingDirectory"`
 	StartInterval         int                `plist:"StartInterval,omitempty"`
 	StartCalendarInterval []CalendarInterval `plist:"StartCalendarInterval,omitempty"`
+	ProcessType           string             `plist:"ProcessType"`
+	LowPriorityIO         bool               `plist:"LowPriorityIO"`
+	Nice                  int                `plist:"Nice"`
+}
+
+var priorityValues = map[string]string{
+	constants.SchedulePriorityBackground: "Background",
+	constants.SchedulePriorityStandard:   "Standard",
 }
 
 // CalendarInterval contains date and time trigger definition inside a map.
@@ -77,19 +122,6 @@ func (c *CalendarInterval) clone() *CalendarInterval {
 		(*clone)[key] = value
 	}
 	return clone
-}
-
-// Init verifies launchd is available on this system
-func Init() error {
-	found, err := exec.LookPath(launchdBin)
-	if err != nil || found == "" {
-		return errors.New("it doesn't look like launchd is installed on your system")
-	}
-	return nil
-}
-
-// Close does nothing in systemd
-func Close() {
 }
 
 // createJob creates a plist file and register it with launchd
@@ -116,24 +148,26 @@ func (j *Job) createJob(schedules []*calendar.Event) error {
 		return err
 	}
 
-	// ask the user if he want to start the service now
-	name := getJobName(j.config.Title(), j.config.SubTitle())
-	message := `
+	if _, noStart := j.config.GetFlag("no-start"); !noStart {
+		// ask the user if he want to start the service now
+		name := getJobName(j.config.Title(), j.config.SubTitle())
+		message := `
 By default, a macOS agent access is restricted. If you leave it to start in the background it's likely to fail.
 You have to start it manually the first time to accept the requests for access:
 
 %% %s %s %s
 
 Do you want to start it now?`
-	answer := term.AskYesNo(os.Stdin, fmt.Sprintf(message, launchctlBin, commandStart, name), true)
-	if answer {
-		// start the service
-		cmd := exec.Command(launchctlBin, commandStart, name)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		err = cmd.Run()
-		if err != nil {
-			return err
+		answer := term.AskYesNo(os.Stdin, fmt.Sprintf(message, launchctlBin, commandStart, name), true)
+		if answer {
+			// start the service
+			cmd := exec.Command(launchctlBin, commandStart, name)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			err = cmd.Run()
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -152,15 +186,25 @@ func (j *Job) createPlistFile(schedules []*calendar.Event) (string, error) {
 		env["PATH"] = pathEnv
 	}
 
+	lowPriorityIO := true
+	nice := constants.DefaultBackgroundNiceFlag
+	if j.config.Priority() == constants.SchedulePriorityStandard {
+		lowPriorityIO = false
+		nice = constants.DefaultStandardNiceFlag
+	}
+
 	job := &LaunchJob{
 		Label:                 name,
 		Program:               j.config.Command(),
-		ProgramArguments:      append([]string{j.config.Command(), "-v"}, j.config.Arguments()...),
+		ProgramArguments:      append([]string{j.config.Command(), "--no-prio"}, j.config.Arguments()...),
 		StandardOutPath:       logfile,
 		StandardErrorPath:     logfile,
 		WorkingDirectory:      j.config.WorkingDirectory(),
 		StartCalendarInterval: getCalendarIntervalsFromSchedules(schedules),
 		EnvironmentVariables:  env,
+		Nice:                  nice,
+		ProcessType:           priorityValues[j.config.Priority()],
+		LowPriorityIO:         lowPriorityIO,
 	}
 
 	filename, err := getFilename(name, j.getSchedulePermission())

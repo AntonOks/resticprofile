@@ -1,34 +1,39 @@
 module github.com/creativeprojects/resticprofile
 
-go 1.13
+go 1.16
 
 require (
-	github.com/adrg/xdg v0.2.2
+	code.gitea.io/sdk/gitea v0.14.0 // indirect
+	github.com/Masterminds/semver/v3 v3.1.1 // indirect
+	github.com/adrg/xdg v0.3.2
 	github.com/capnspacehook/taskmaster v0.0.0-20190802050140-eebf732b5748
-	github.com/coreos/go-systemd/v22 v22.1.0
-	github.com/creativeprojects/clog v0.7.0
-	github.com/creativeprojects/go-selfupdate v0.4.0
+	github.com/coreos/go-systemd/v22 v22.3.0
+	github.com/creativeprojects/clog v0.8.0
+	github.com/creativeprojects/go-selfupdate v0.6.1
 	github.com/fsnotify/fsnotify v1.4.9 // indirect
-	github.com/kr/text v0.2.0 // indirect
+	github.com/golang/protobuf v1.5.2 // indirect
+	github.com/google/go-querystring v1.1.0 // indirect
+	github.com/hashicorp/go-version v1.3.0 // indirect
 	github.com/mackerelio/go-osstat v0.1.0
-	github.com/mattn/go-colorable v0.1.8 // indirect
-	github.com/mitchellh/mapstructure v1.3.3
-	github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e // indirect
+	github.com/magiconair/properties v1.8.4 // indirect
+	github.com/mitchellh/mapstructure v1.4.1
 	github.com/pelletier/go-toml v1.8.1 // indirect
-	github.com/rickb777/date v1.14.3
-	github.com/shirou/gopsutil/v3 v3.20.10
+	github.com/rickb777/date v1.15.3
+	github.com/shirou/gopsutil/v3 v3.21.2
 	github.com/smartystreets/assertions v1.0.0 // indirect
-	github.com/spf13/afero v1.4.1
+	github.com/spf13/afero v1.6.0
 	github.com/spf13/cast v1.3.1 // indirect
 	github.com/spf13/jwalterweatherman v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.5
 	github.com/spf13/viper v1.7.1
-	github.com/stretchr/testify v1.6.1
-	golang.org/x/crypto v0.0.0-20201112155050-0c6587e931a9
-	golang.org/x/sys v0.0.0-20201113233024-12cec1faf1ba
+	github.com/stretchr/testify v1.7.0
+	github.com/ulikunitz/xz v0.5.10 // indirect
+	golang.org/x/crypto v0.0.0-20210415154028-4f45737414dc
+	golang.org/x/net v0.0.0-20210415231046-e915ea6b2b7d // indirect
+	golang.org/x/oauth2 v0.0.0-20210413134643-5e61552d6c78 // indirect
+	golang.org/x/sys v0.0.0-20210415045647-66c3f260301c
 	google.golang.org/appengine v1.6.7 // indirect
-	gopkg.in/check.v1 v1.0.0-20200227125254-8fa46927fb4f // indirect
-	gopkg.in/ini.v1 v1.57.0 // indirect
-	gopkg.in/yaml.v3 v3.0.0-20200615113413-eeeca48fe776 // indirect
-	howett.net/plist v0.0.0-20201026045517-117a925f2150
+	gopkg.in/ini.v1 v1.62.0 // indirect
+	gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b // indirect
+	howett.net/plist v0.0.0-20201203080718-1454fab16a06
 )

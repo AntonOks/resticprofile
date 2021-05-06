@@ -80,27 +80,39 @@ self:
     inherit: default
     status-file: /Volumes/RAMDisk/status.json
     backup:
-        check-before: true
+        extended-status: false
+        check-before: false
+        no-error-on-warning: true
         source: {{ .CurrentDir }}
         exclude:
           - "/**/.git/"
-          - "resticp\\*"
         schedule:
-        - "*:00,30"
+          - "*:00,30"
         schedule-permission: user
         {{ template "tags" . }}
+    run-after-fail:
+      - "echo restic returned an error, command line = ${ERROR_COMMANDLINE}"
+      - "echo restic stderr = ${RESTIC_STDERR}"
     check:
         schedule:
-        - "*:15,45"
+          - "*:15,45"
+    retention:
+        after-backup: true
+    forget:
+        schedule: "weekly"
+        schedule-priority: standard
 
 system:
     initialize: true
+    no-cache: true
     inherit: default
     backup:
         source: ./
         schedule:
         - "*:5,10,20,25,35,40,50,55"
         schedule-permission: system
+    forget:
+        schedule: "weekly"
 
 src:
     backup:
@@ -137,3 +149,13 @@ stdin:
     inherit: default
     snapshots:
         {{ template "tags" . }}
+
+dropbox:
+    initialize: false
+    inherit: default
+    initialize: false
+    backup:
+        extended-status: false
+        check-before: false
+        no-error-on-warning: true
+        source: "../../../../../Dropbox"

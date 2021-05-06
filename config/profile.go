@@ -1,6 +1,9 @@
 package config
 
 import (
+	"reflect"
+	"time"
+
 	"github.com/creativeprojects/clog"
 	"github.com/creativeprojects/resticprofile/constants"
 )
@@ -24,52 +27,59 @@ type Profile struct {
 	RunAfter      []string                  `mapstructure:"run-after"`
 	RunAfterFail  []string                  `mapstructure:"run-after-fail"`
 	StatusFile    string                    `mapstructure:"status-file"`
+	OtherFlags    map[string]interface{}    `mapstructure:",remain"`
 	Environment   map[string]string         `mapstructure:"env"`
 	Backup        *BackupSection            `mapstructure:"backup"`
 	Retention     *RetentionSection         `mapstructure:"retention"`
 	Check         *OtherSectionWithSchedule `mapstructure:"check"`
+	Prune         *OtherSectionWithSchedule `mapstructure:"prune"`
 	Snapshots     map[string]interface{}    `mapstructure:"snapshots"`
-	Forget        map[string]interface{}    `mapstructure:"forget"`
+	Forget        *OtherSectionWithSchedule `mapstructure:"forget"`
 	Mount         map[string]interface{}    `mapstructure:"mount"`
-	OtherFlags    map[string]interface{}    `mapstructure:",remain"`
 }
 
 // BackupSection contains the specific configuration to the 'backup' command
 type BackupSection struct {
-	CheckBefore        bool                   `mapstructure:"check-before"`
-	CheckAfter         bool                   `mapstructure:"check-after"`
-	RunBefore          []string               `mapstructure:"run-before"`
-	RunAfter           []string               `mapstructure:"run-after"`
-	UseStdin           bool                   `mapstructure:"stdin" argument:"stdin"`
-	Source             []string               `mapstructure:"source"`
-	Exclude            []string               `mapstructure:"exclude" argument:"exclude"`
-	Iexclude           []string               `mapstructure:"iexclude" argument:"iexclude"`
-	ExcludeFile        []string               `mapstructure:"exclude-file" argument:"exclude-file"`
-	FilesFrom          []string               `mapstructure:"files-from" argument:"files-from"`
-	Schedule           []string               `mapstructure:"schedule"`
-	SchedulePermission string                 `mapstructure:"schedule-permission"`
-	ScheduleLog        string                 `mapstructure:"schedule-log"`
-	OtherFlags         map[string]interface{} `mapstructure:",remain"`
+	ScheduleSection  `mapstructure:",squash"`
+	CheckBefore      bool                   `mapstructure:"check-before"`
+	CheckAfter       bool                   `mapstructure:"check-after"`
+	RunBefore        []string               `mapstructure:"run-before"`
+	RunAfter         []string               `mapstructure:"run-after"`
+	UseStdin         bool                   `mapstructure:"stdin" argument:"stdin"`
+	Source           []string               `mapstructure:"source"`
+	Exclude          []string               `mapstructure:"exclude" argument:"exclude"`
+	Iexclude         []string               `mapstructure:"iexclude" argument:"iexclude"`
+	ExcludeFile      []string               `mapstructure:"exclude-file" argument:"exclude-file"`
+	FilesFrom        []string               `mapstructure:"files-from" argument:"files-from"`
+	ExtendedStatus   bool                   `mapstructure:"extended-status" argument:"json"`
+	NoErrorOnWarning bool                   `mapstructure:"no-error-on-warning"`
+	OtherFlags       map[string]interface{} `mapstructure:",remain"`
 }
 
 // RetentionSection contains the specific configuration to
 // the 'forget' command when running as part of a backup
 type RetentionSection struct {
-	BeforeBackup       bool                   `mapstructure:"before-backup"`
-	AfterBackup        bool                   `mapstructure:"after-backup"`
-	Schedule           []string               `mapstructure:"schedule"`
-	SchedulePermission string                 `mapstructure:"schedule-permission"`
-	ScheduleLog        string                 `mapstructure:"schedule-log"`
-	OtherFlags         map[string]interface{} `mapstructure:",remain"`
+	ScheduleSection `mapstructure:",squash"`
+	BeforeBackup    bool                   `mapstructure:"before-backup"`
+	AfterBackup     bool                   `mapstructure:"after-backup"`
+	OtherFlags      map[string]interface{} `mapstructure:",remain"`
 }
 
 // OtherSectionWithSchedule is a section containing schedule only specific parameters
 // (the other parameters being for restic)
 type OtherSectionWithSchedule struct {
-	Schedule           []string               `mapstructure:"schedule"`
-	SchedulePermission string                 `mapstructure:"schedule-permission"`
-	ScheduleLog        string                 `mapstructure:"schedule-log"`
-	OtherFlags         map[string]interface{} `mapstructure:",remain"`
+	ScheduleSection `mapstructure:",squash"`
+	OtherFlags      map[string]interface{} `mapstructure:",remain"`
+}
+
+// ScheduleSection contains the parameters for scheduling a command (backup, check, forget, etc.)
+type ScheduleSection struct {
+	Schedule           []string      `mapstructure:"schedule"`
+	SchedulePermission string        `mapstructure:"schedule-permission"`
+	ScheduleLog        string        `mapstructure:"schedule-log"`
+	SchedulePriority   string        `mapstructure:"schedule-priority"`
+	ScheduleLockMode   string        `mapstructure:"schedule-lock-mode"`
+	ScheduleLockWait   time.Duration `mapstructure:"schedule-lock-wait"`
 }
 
 // NewProfile instantiates a new blank profile
@@ -125,7 +135,7 @@ func (p *Profile) SetHost(hostname string) {
 		replaceTrueValue(p.Snapshots, constants.ParameterHost, hostname)
 	}
 	if p.Forget != nil {
-		replaceTrueValue(p.Forget, constants.ParameterHost, hostname)
+		replaceTrueValue(p.Forget.OtherFlags, constants.ParameterHost, hostname)
 	}
 	if p.Mount != nil {
 		replaceTrueValue(p.Mount, constants.ParameterHost, hostname)
@@ -168,9 +178,14 @@ func (p *Profile) GetCommandFlags(command string) map[string][]string {
 			flags = addOtherFlags(flags, p.Check.OtherFlags)
 		}
 
+	case constants.CommandPrune:
+		if p.Prune != nil && p.Prune.OtherFlags != nil {
+			flags = addOtherFlags(flags, p.Prune.OtherFlags)
+		}
+
 	case constants.CommandForget:
 		if p.Forget != nil {
-			flags = addOtherFlags(flags, p.Forget)
+			flags = addOtherFlags(flags, p.Forget.OtherFlags)
 		}
 
 	case constants.CommandMount:
@@ -184,6 +199,11 @@ func (p *Profile) GetCommandFlags(command string) map[string][]string {
 
 // GetRetentionFlags returns the flags specific to the "forget" command being run as part of a backup
 func (p *Profile) GetRetentionFlags() map[string][]string {
+	// it shouldn't happen when started as a command, but can occur in a unit test
+	if p.Retention == nil {
+		return nil
+	}
+
 	// if there was no "other" flags, the map could be un-initialized
 	if p.Retention.OtherFlags == nil {
 		p.Retention.OtherFlags = make(map[string]interface{})
@@ -198,6 +218,18 @@ func (p *Profile) GetRetentionFlags() map[string][]string {
 	return flags
 }
 
+// HasDeprecatedRetentionSchedule indicates if there's one or more schedule parameters in the retention section,
+// which is deprecated as of 0.11.0
+func (p *Profile) HasDeprecatedRetentionSchedule() bool {
+	if p.Retention == nil {
+		return false
+	}
+	if len(p.Retention.Schedule) > 0 {
+		return true
+	}
+	return false
+}
+
 // GetBackupSource returns the directories to backup
 func (p *Profile) GetBackupSource() []string {
 	if p.Backup == nil {
@@ -206,51 +238,68 @@ func (p *Profile) GetBackupSource() []string {
 	return p.Backup.Source
 }
 
+// SchedulableCommands returns all command names that could have a schedule
+func (p *Profile) SchedulableCommands() []string {
+	sections := p.allSchedulableSections()
+	commands := make([]string, 0, len(sections))
+	for name := range sections {
+		commands = append(commands, name)
+	}
+	return commands
+}
+
 // Schedules returns a slice of ScheduleConfig that satisfy the schedule.Config interface
 func (p *Profile) Schedules() []*ScheduleConfig {
-	// Default to 3: backup, retention and check
-	configs := make([]*ScheduleConfig, 0, 3)
-	// Backup
-	if p.Backup != nil && p.Backup.Schedule != nil && len(p.Backup.Schedule) > 0 {
-		config := &ScheduleConfig{
-			profileName: p.Name,
-			commandName: constants.CommandBackup,
-			schedules:   p.Backup.Schedule,
-			permission:  p.Backup.SchedulePermission,
-			environment: p.Environment,
-			nice:        10, // hard-coded for now
-			logfile:     p.Backup.ScheduleLog,
+	// All SectionWithSchedule (backup, check, prune, etc)
+	sections := p.allSchedulableSections()
+	configs := make([]*ScheduleConfig, 0, len(sections))
+
+	for name, section := range sections {
+		if s := getScheduleSection(section); s != nil && s.Schedule != nil && len(s.Schedule) > 0 {
+			config := &ScheduleConfig{
+				profileName: p.Name,
+				commandName: name,
+				schedules:   s.Schedule,
+				permission:  s.SchedulePermission,
+				environment: p.Environment,
+				logfile:     s.ScheduleLog,
+				lockMode:    s.ScheduleLockMode,
+				lockWait:    s.ScheduleLockWait,
+				priority:    s.SchedulePriority,
+				configfile:  p.config.configFile,
+			}
+
+			configs = append(configs, config)
 		}
-		configs = append(configs, config)
 	}
-	// Retention (forget)
-	if p.Retention != nil && p.Retention.Schedule != nil && len(p.Retention.Schedule) > 0 {
-		config := &ScheduleConfig{
-			profileName: p.Name,
-			commandName: constants.SectionConfigurationRetention,
-			schedules:   p.Retention.Schedule,
-			permission:  p.Retention.SchedulePermission,
-			environment: p.Environment,
-			nice:        10, // hard-coded for now
-			logfile:     p.Retention.ScheduleLog,
-		}
-		configs = append(configs, config)
-	}
-	// Check
-	if p.Check != nil && p.Check.Schedule != nil && len(p.Check.Schedule) > 0 {
-		config := &ScheduleConfig{
-			profileName: p.Name,
-			commandName: constants.CommandCheck,
-			schedules:   p.Check.Schedule,
-			permission:  p.Check.SchedulePermission,
-			environment: p.Environment,
-			nice:        10, // hard-coded for now
-			logfile:     p.Check.ScheduleLog,
-		}
-		configs = append(configs, config)
-	}
+
 	return configs
 }
+
+func (p *Profile) allSchedulableSections() map[string]interface{} {
+	return map[string]interface{}{
+		constants.CommandBackup:                 p.Backup,
+		constants.SectionConfigurationRetention: p.Retention,
+		constants.CommandCheck:                  p.Check,
+		constants.CommandForget:                 p.Forget,
+		constants.CommandPrune:                  p.Prune,
+	}
+}
+
+func getScheduleSection(section interface{}) *ScheduleSection {
+	if !reflect.ValueOf(section).IsNil() {
+		switch v := section.(type) {
+		case *BackupSection:
+			return &v.ScheduleSection
+		case *RetentionSection:
+			return &v.ScheduleSection
+		case *OtherSectionWithSchedule:
+			return &v.ScheduleSection
+		}
+	}
+	return nil
+}
+
 func addOtherFlags(flags map[string][]string, otherFlags map[string]interface{}) map[string][]string {
 	if len(otherFlags) == 0 {
 		return flags

@@ -1,6 +1,18 @@
 package constants
 
-import "github.com/creativeprojects/resticprofile/priority"
+import (
+	"time"
+
+	"github.com/creativeprojects/resticprofile/priority"
+)
+
+// Scheduler type
+const (
+	SchedulerLaunchd = "launchd"
+	SchedulerWindows = "taskscheduler"
+	SchedulerSystemd = "systemd"
+	SchedulerCrond   = "crond"
+)
 
 var (
 	// PriorityValues is the map between the name and the value
@@ -12,4 +24,17 @@ var (
 		"high":       priority.High,
 		"highest":    priority.Highest,
 	}
+)
+
+// Limits for restic lock handling (stale locks and retry on lock failure)
+const (
+	MinResticLockRetryTime = 15 * time.Second
+	MaxResticLockRetryTime = 30 * time.Minute
+	MinResticStaleLockAge  = 1 * time.Hour
+)
+
+// Schedule lock mode config options
+const (
+	ScheduleLockModeOptionFail   = "fail"
+	ScheduleLockModeOptionIgnore = "ignore"
 )

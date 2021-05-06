@@ -24,7 +24,7 @@ import (
 
 // These fields are populated by the goreleaser build
 var (
-	version = "0.10.1-dev"
+	version = "0.13.0-dev"
 	commit  = ""
 	date    = ""
 	builtBy = ""
@@ -112,7 +112,7 @@ func main() {
 	// Deprecated in version 0.7.0
 	// Keep for compatibility with version 0.6.1
 	if flags.selfUpdate {
-		err = confirmAndSelfUpdate(flags.quiet, flags.verbose, version)
+		err = confirmAndSelfUpdate(flags.quiet, flags.verbose, version, false)
 		if err != nil {
 			clog.Error(err)
 			exitCode = 1
@@ -168,15 +168,17 @@ func main() {
 		}
 	}
 
-	err = setPriority(global.Nice, global.Priority)
-	if err != nil {
-		clog.Warning(err)
-	}
-
-	if global.IONice {
-		err = priority.SetIONice(global.IONiceClass, global.IONiceLevel)
+	if flags.noPriority == false {
+		err = setPriority(global.Nice, global.Priority)
 		if err != nil {
 			clog.Warning(err)
+		}
+
+		if global.IONice {
+			err = priority.SetIONice(global.IONiceClass, global.IONiceLevel)
+			if err != nil {
+				clog.Warning(err)
+			}
 		}
 	}
 
@@ -297,6 +299,8 @@ func runProfile(
 		return fmt.Errorf("cannot load profile '%s'", profileName)
 	}
 
+	displayProfileDeprecationNotices(profile)
+
 	// Send the quiet/verbose down to restic as well (override profile configuration)
 	if flags.quiet {
 		profile.Quiet = true
@@ -345,6 +349,15 @@ func runProfile(
 		resticArguments,
 		sigChan,
 	)
+
+	wrapper.setGlobal(global)
+
+	if flags.noLock {
+		wrapper.ignoreLock()
+	} else if flags.lockWait > 0 {
+		wrapper.maxWaitOnLock(flags.lockWait)
+	}
+
 	err = wrapper.runProfile()
 	if err != nil {
 		return err

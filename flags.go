@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"time"
 
 	"github.com/creativeprojects/resticprofile/constants"
 	"github.com/spf13/pflag"
@@ -19,6 +20,8 @@ type commandLineFlags struct {
 	name        string
 	logFile     string
 	dryRun      bool
+	noLock      bool
+	lockWait    time.Duration
 	noAnsi      bool
 	theme       string
 	resticArgs  []string
@@ -26,6 +29,7 @@ type commandLineFlags struct {
 	wait        bool
 	isChild     bool
 	parentPort  int
+	noPriority  bool
 }
 
 // loadFlags loads command line flags (before any command)
@@ -34,12 +38,13 @@ func loadFlags() (*pflag.FlagSet, commandLineFlags) {
 
 	flagset.Usage = func() {
 		fmt.Println("\nUsage of resticprofile:")
-		fmt.Println("\tresticprofile [resticprofile flags] [command] [restic flags]")
+		fmt.Println("\tresticprofile [resticprofile flags] [restic command] [restic flags]")
+		fmt.Println("\tresticprofile [resticprofile flags] [resticprofile command] [command specific flags]")
 		fmt.Println("\nresticprofile flags:")
 		flagset.PrintDefaults()
 		fmt.Println("\nresticprofile own commands:")
 		displayOwnCommands(os.Stdout)
-		fmt.Println("")
+		fmt.Println("\nMore information: https://github.com/creativeprojects/resticprofile#using-resticprofile")
 	}
 
 	flags := commandLineFlags{}
@@ -54,8 +59,12 @@ func loadFlags() (*pflag.FlagSet, commandLineFlags) {
 	flagset.StringVarP(&flags.logFile, "log", "l", "", "logs into a file instead of the console")
 	flagset.BoolVar(&flags.dryRun, "dry-run", false, "display the restic commands instead of running them")
 
+	flagset.BoolVar(&flags.noLock, "no-lock", false, "skip profile lock file")
+	flagset.DurationVar(&flags.lockWait, "lock-wait", 0, "wait up to duration to acquire a lock (syntax \"1h5m30s\")")
+
 	flagset.BoolVar(&flags.noAnsi, "no-ansi", false, "disable ansi control characters (disable console colouring)")
 	flagset.StringVar(&flags.theme, "theme", constants.DefaultTheme, "console colouring theme (dark, light, none)")
+	flagset.BoolVar(&flags.noPriority, "no-prio", false, "don't set any priority on load: used when started from a service that has already set the priority")
 
 	flagset.BoolVarP(&flags.wait, "wait", "w", false, "wait at the end until the user presses the enter key")
 

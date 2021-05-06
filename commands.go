@@ -19,6 +19,7 @@ import (
 	"github.com/creativeprojects/resticprofile/config"
 	"github.com/creativeprojects/resticprofile/constants"
 	"github.com/creativeprojects/resticprofile/remote"
+	"github.com/creativeprojects/resticprofile/schedule"
 	"github.com/creativeprojects/resticprofile/term"
 	"github.com/creativeprojects/resticprofile/win"
 )
@@ -27,8 +28,9 @@ type ownCommand struct {
 	name              string
 	description       string
 	action            func(io.Writer, *config.Config, commandLineFlags, []string) error
-	needConfiguration bool // true if the action needs a configuration file loaded
-	hide              bool // don't display the command in the help
+	needConfiguration bool              // true if the action needs a configuration file loaded
+	hide              bool              // don't display the command in the help
+	flags             map[string]string // own command flags should be simple enough to be handled manually for now
 }
 
 var (
@@ -38,12 +40,14 @@ var (
 			description:       "display version (run in verbose mode for detailed information)",
 			action:            displayVersion,
 			needConfiguration: false,
+			flags:             map[string]string{"-v, --verbose": "display details information"},
 		},
 		{
 			name:              "self-update",
 			description:       "update to latest resticprofile (use -q/--quiet flag to update without confirmation)",
 			action:            selfUpdate,
 			needConfiguration: false,
+			flags:             map[string]string{"-q, --quiet": "update without confirmation prompt"},
 		},
 		{
 			name:              "profiles",
@@ -65,24 +69,30 @@ var (
 		},
 		{
 			name:              "schedule",
-			description:       "schedule a backup",
+			description:       "schedule jobs from a profile (use --all flag to schedule all jobs of all profiles)",
 			action:            createSchedule,
 			needConfiguration: true,
 			hide:              false,
+			flags: map[string]string{
+				"--no-start": "don't start the timer/service (systemd/launch only)",
+				"--all":      "add all scheduled jobs of all profiles",
+			},
 		},
 		{
 			name:              "unschedule",
-			description:       "remove a scheduled backup",
+			description:       "remove scheduled jobs of a profile (use --all flag to unschedule all profiles)",
 			action:            removeSchedule,
 			needConfiguration: true,
 			hide:              false,
+			flags:             map[string]string{"--all": "remove all scheduled jobs of all profiles"},
 		},
 		{
 			name:              "status",
-			description:       "display the status of a scheduled backup job",
+			description:       "display the status of scheduled jobs (use --all flag for all profiles)",
 			action:            statusSchedule,
 			needConfiguration: true,
 			hide:              false,
+			flags:             map[string]string{"--all": "display the status of all scheduled jobs of all profiles"},
 		},
 		// hidden commands
 		{
@@ -110,14 +120,15 @@ var (
 )
 
 func displayOwnCommands(output io.Writer) {
-	w := tabwriter.NewWriter(output, 0, 0, 3, ' ', 0)
+	commandsWriter := tabwriter.NewWriter(output, 0, 0, 3, ' ', 0)
 	for _, command := range ownCommands {
 		if command.hide {
 			continue
 		}
-		_, _ = fmt.Fprintf(w, "\t%s\t%s\n", command.name, command.description)
+		_, _ = fmt.Fprintf(commandsWriter, "\t%s\t%s\n", command.name, command.description)
+		// TODO: find a nice way to display command flags
 	}
-	_ = w.Flush()
+	_ = commandsWriter.Flush()
 }
 
 func isOwnCommand(command string, configurationLoaded bool) bool {
@@ -144,10 +155,11 @@ func displayProfilesCommand(output io.Writer, configuration *config.Config, _ co
 	return nil
 }
 
-func displayVersion(output io.Writer, _ *config.Config, flags commandLineFlags, _ []string) error {
-	fmt.Fprintf(output, "resticprofile version %s commit %s.\n", version, commit)
+func displayVersion(output io.Writer, _ *config.Config, flags commandLineFlags, args []string) error {
+	fmt.Fprintf(output, "resticprofile version %s commit %q\n", version, commit)
 
-	if flags.verbose {
+	// allow for the general verbose flag, or specified after the command
+	if flags.verbose || (len(args) > 0 && (args[0] == "-v" || args[0] == "--verbose")) {
 		w := tabwriter.NewWriter(output, 0, 0, 3, ' ', 0)
 		_, _ = fmt.Fprintf(w, "\n")
 		_, _ = fmt.Fprintf(w, "\t%s:\t%s\n", "home", "https://github.com/creativeprojects/resticprofile")
@@ -211,7 +223,11 @@ func displayGroups(output io.Writer, configuration *config.Config) {
 }
 
 func selfUpdate(_ io.Writer, _ *config.Config, flags commandLineFlags, args []string) error {
-	err := confirmAndSelfUpdate(flags.quiet, flags.verbose, version)
+	quiet := flags.quiet
+	if !quiet && len(args) > 0 && (args[0] == "-q" || args[0] == "--quiet") {
+		quiet = true
+	}
+	err := confirmAndSelfUpdate(quiet, flags.verbose, version, true)
 	if err != nil {
 		return err
 	}
@@ -236,14 +252,26 @@ func sortedMapKeys(data map[string][]string) []string {
 	return keys
 }
 
+// containsString returns true if arg is contained in args.
+func containsString(args []string, arg string) bool {
+	if args != nil {
+		for _, a := range args {
+			if a == arg {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func showProfile(output io.Writer, c *config.Config, flags commandLineFlags, args []string) error {
 	// Show global section first
 	global, err := c.GetGlobalSection()
 	if err != nil {
 		return fmt.Errorf("cannot show global: %w", err)
 	}
-	fmt.Printf("\n%s:\n", constants.SectionConfigurationGlobal)
-	config.ShowStruct(os.Stdout, global)
+	config.ShowStruct(os.Stdout, global, constants.SectionConfigurationGlobal)
+	fmt.Println("")
 
 	// Then show profile
 	profile, err := c.GetProfile(flags.name)
@@ -253,6 +281,9 @@ func showProfile(output io.Writer, c *config.Config, flags commandLineFlags, arg
 	if profile == nil {
 		return fmt.Errorf("profile '%s' not found", flags.name)
 	}
+	// Display deprecation notice
+	displayProfileDeprecationNotices(profile)
+
 	// All files in the configuration are relative to the configuration file, NOT the folder where resticprofile is started
 	// So we need to fix all relative files
 	rootPath := filepath.Dir(c.GetConfigFile())
@@ -261,8 +292,8 @@ func showProfile(output io.Writer, c *config.Config, flags commandLineFlags, arg
 	}
 	profile.SetRootPath(rootPath)
 
-	fmt.Printf("\n%s:\n", flags.name)
-	config.ShowStruct(os.Stdout, profile)
+	config.ShowStruct(os.Stdout, profile, flags.name)
+	fmt.Println("")
 	return nil
 }
 
@@ -293,67 +324,196 @@ func randomKey(output io.Writer, c *config.Config, flags commandLineFlags, args 
 	return err
 }
 
+// selectProfiles returns a list with length >= 1, containing profile names that have been selected in flags or extra args.
+// With "--all" set in args names of all profiles are returned, else profile or profile group referenced in flags.name returns names.
+// If no match, flags.name is returned as-is.
+func selectProfiles(c *config.Config, flags commandLineFlags, args []string) []string {
+	profiles := make([]string, 0, 1)
+
+	// Check for --all or groups
+	if containsString(args, "--all") {
+		for profileName, _ := range c.GetProfileSections() {
+			profiles = append(profiles, profileName)
+		}
+
+	} else if !c.HasProfile(flags.name) {
+		if names, err := c.GetProfileGroup(flags.name); err == nil && names != nil {
+			profiles = names
+		}
+	}
+
+	// Fallback add profile name from flags
+	if len(profiles) == 0 {
+		profiles = append(profiles, flags.name)
+	}
+
+	return profiles
+}
+
+// flagsForProfile returns a copy of flags with name set to profileName.
+func flagsForProfile(flags commandLineFlags, profileName string) commandLineFlags {
+	flags.name = profileName
+	return flags
+}
+
+// createSchedule accepts one argument from the commandline: --no-start
 func createSchedule(_ io.Writer, c *config.Config, flags commandLineFlags, args []string) error {
-	profile, err := c.GetProfile(flags.name)
-	if err != nil {
-		return fmt.Errorf("cannot load profile '%s': %w", flags.name, err)
-	}
-	if profile == nil {
-		return fmt.Errorf("profile '%s' not found", flags.name)
+	type profileJobs struct {
+		scheduler, profile string
+		jobs               []*config.ScheduleConfig
 	}
 
-	schedules := profile.Schedules()
-	if len(schedules) == 0 {
-		return fmt.Errorf("no schedule found for profile '%s'", flags.name)
+	allJobs := make([]profileJobs, 0, 1)
+
+	// Step 1: Collect all jobs of all selected profiles
+	for _, profileName := range selectProfiles(c, flags, args) {
+		profileFlags := flagsForProfile(flags, profileName)
+
+		scheduler, profile, jobs, err := getScheduleJobs(c, profileFlags)
+		if err == nil {
+			err = requireScheduleJobs(jobs, profileFlags)
+
+			// Skip profile with no schedules when "--all" option is set.
+			if err != nil && containsString(args, "--all") {
+				continue
+			}
+		}
+		if err != nil {
+			return err
+		}
+
+		displayProfileDeprecationNotices(profile)
+
+		// add the no-start flag to all the jobs
+		if containsString(args, "--no-start") {
+			for id := range jobs {
+				jobs[id].SetFlag("no-start", "")
+			}
+		}
+
+		allJobs = append(allJobs, profileJobs{scheduler: scheduler, profile: profileName, jobs: jobs})
 	}
 
-	err = scheduleJobs(flags.config, schedules)
-	if err != nil {
-		return retryElevated(err, flags)
+	// Step 2: Schedule all collected jobs
+	for _, j := range allJobs {
+		err := scheduleJobs(j.scheduler, j.profile, j.jobs)
+		if err != nil {
+			return retryElevated(err, flags)
+		}
 	}
+
 	return nil
 }
 
 func removeSchedule(_ io.Writer, c *config.Config, flags commandLineFlags, args []string) error {
-	profile, err := c.GetProfile(flags.name)
-	if err != nil {
-		return fmt.Errorf("cannot load profile '%s': %w", flags.name, err)
-	}
-	if profile == nil {
-		return fmt.Errorf("profile '%s' not found", flags.name)
+	// Unschedule all jobs of all selected profiles
+	for _, profileName := range selectProfiles(c, flags, args) {
+		profileFlags := flagsForProfile(flags, profileName)
+
+		scheduler, _, jobs, err := getRemovableScheduleJobs(c, profileFlags)
+		if err != nil {
+			return err
+		}
+
+		err = removeJobs(scheduler, profileName, jobs)
+		if err != nil {
+			return retryElevated(err, flags)
+		}
 	}
 
-	schedules := profile.Schedules()
-	if len(schedules) == 0 {
-		return fmt.Errorf("no schedule found for profile '%s'", flags.name)
+	return nil
+}
+
+func statusSchedule(w io.Writer, c *config.Config, flags commandLineFlags, args []string) error {
+	if !containsString(args, "--all") {
+		// simple case of displaying status for one profile
+		scheduler, profile, schedules, err := getScheduleJobs(c, flags)
+		if err != nil {
+			return err
+		}
+		if len(schedules) == 0 {
+			clog.Warningf("profile %s has no schedule", flags.name)
+			return nil
+		}
+		return statusScheduleProfile(scheduler, profile, schedules, flags)
 	}
 
-	err = removeJobs(schedules)
+	for _, profileName := range selectProfiles(c, flags, args) {
+		profileFlags := flagsForProfile(flags, profileName)
+		scheduler, profile, schedules, err := getScheduleJobs(c, profileFlags)
+		if err != nil {
+			return err
+		}
+		// it's all fine if this profile has no schedule
+		if len(schedules) == 0 {
+			continue
+		}
+		clog.Infof("Profile %q:", profileName)
+		err = statusScheduleProfile(scheduler, profile, schedules, profileFlags)
+		if err != nil {
+			// display the error but keep going with the other profiles
+			clog.Error(err)
+		}
+	}
+	return nil
+}
+
+func statusScheduleProfile(scheduler string, profile *config.Profile, schedules []*config.ScheduleConfig, flags commandLineFlags) error {
+	displayProfileDeprecationNotices(profile)
+
+	err := statusJobs(scheduler, flags.name, convertSchedules(schedules))
 	if err != nil {
 		return retryElevated(err, flags)
 	}
 	return nil
 }
 
-func statusSchedule(_ io.Writer, c *config.Config, flags commandLineFlags, args []string) error {
-	profile, err := c.GetProfile(flags.name)
+func getScheduleJobs(c *config.Config, flags commandLineFlags) (string, *config.Profile, []*config.ScheduleConfig, error) {
+	global, err := c.GetGlobalSection()
 	if err != nil {
-		return fmt.Errorf("cannot load profile '%s': %w", flags.name, err)
-	}
-	if profile == nil {
-		return fmt.Errorf("profile '%s' not found", flags.name)
+		return "", nil, nil, fmt.Errorf("cannot load global section: %w", err)
 	}
 
-	schedules := profile.Schedules()
+	profile, err := c.GetProfile(flags.name)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("cannot load profile '%s': %w", flags.name, err)
+	}
+	if profile == nil {
+		return "", nil, nil, fmt.Errorf("profile '%s' not found", flags.name)
+	}
+
+	return global.Scheduler, profile, profile.Schedules(), nil
+}
+
+func requireScheduleJobs(schedules []*config.ScheduleConfig, flags commandLineFlags) error {
 	if len(schedules) == 0 {
 		return fmt.Errorf("no schedule found for profile '%s'", flags.name)
 	}
-
-	err = statusJobs(schedules)
-	if err != nil {
-		return retryElevated(err, flags)
-	}
 	return nil
+}
+
+func getRemovableScheduleJobs(c *config.Config, flags commandLineFlags) (string, *config.Profile, []schedule.Config, error) {
+	scheduler, profile, schedules, err := getScheduleJobs(c, flags)
+	if err != nil {
+		return "", nil, nil, err
+	}
+
+	configs := convertSchedules(schedules)
+
+	// Add all undeclared schedules as remove-only configs
+	for _, command := range profile.SchedulableCommands() {
+		declared := false
+		for _, s := range schedules {
+			if declared = s.SubTitle() == command; declared {
+				break
+			}
+		}
+		if !declared {
+			configs = append(configs, schedule.NewRemoveOnlyConfig(profile.Name, command))
+		}
+	}
+
+	return scheduler, profile, configs, nil
 }
 
 func testElevationCommand(_ io.Writer, c *config.Config, flags commandLineFlags, args []string) error {
